@@ -1,8 +1,6 @@
 package cn.xender.transfer;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -18,17 +16,17 @@ import android.widget.RelativeLayout;
 
 import cn.xender.aar.PhonePxConversion;
 import cn.xender.aar.QrCodeCreateWorker;
-import cn.xender.aar.ShareActivityContent;
 import cn.xender.aar.permission.PermissionUtil;
 import cn.xender.aar.views.NougatOpenApDlg;
 import cn.xender.core.ap.CoreApManager;
 import cn.xender.core.ap.CoreCreateApCallback;
 import cn.xender.core.ap.CreateApEvent;
 import cn.xender.core.server.utils.ActionListener;
-import cn.xender.transfer.R;
+import cn.xender.core.server.utils.ActionProtocol;
 
-public class MyShareActivity extends Activity implements ActionListener {
+public class MyShareActivity extends Activity {
     RelativeLayout container;
+    ActionProtocol protocol;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -39,6 +37,8 @@ public class MyShareActivity extends Activity implements ActionListener {
         CoreApManager.getInstance().initApplicationContext(getApplicationContext());
 
         createAp();
+
+        registerListener();
 
     }
 
@@ -105,17 +105,12 @@ public class MyShareActivity extends Activity implements ActionListener {
         }
     }
 
-    /**
-     * 二维码大小设置，默认200
-     */
     private void handleCreateResult(CreateApEvent result, boolean retryIfNeed) {
         //CREATE_OK = 6
         if(result.isOk() && !TextUtils.isEmpty(result.getUrl())){
-
-            int qrSize = PhonePxConversion.dip2px(MyShareActivity.this,200);//二维码大小
-
+            ActionProtocol.sendApCreatedAction(this);
+            int qrSize = PhonePxConversion.dip2px(MyShareActivity.this,240);/****二维码大小*****/
             new QrCodeCreateWorker().startWork(MyShareActivity.this,_handler,result.getUrl(),qrSize,qrSize, Color.WHITE,true);
-
         }else if(result.isNeedUserManualOpen()){//SAVED_25_CONFIG = 3
 
             showManualOpenDialog();//显示7.1的dlg
@@ -194,29 +189,11 @@ public class MyShareActivity extends Activity implements ActionListener {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if(keyCode == KeyEvent.KEYCODE_BACK){
-            showQuitDlg();
+            PermissionUtil.showQuitDlg(this);
             return true;
         }
 
         return super.onKeyDown(keyCode, event);
-    }
-
-    private ShareActivityContent content = ShareActivityContent.getInstance();
-    private void showQuitDlg(){
-
-        new AlertDialog.Builder(this)
-                .setCancelable(false)
-                .setMessage(content.getDlg_2_msg())
-                .setPositiveButton(content.getDlg_2_positive(), new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        finish();
-                    }
-                })
-                .setNegativeButton(content.getDlg_2_negative(), null)
-                .create()
-                .show();
-
     }
 
     @Override
@@ -237,7 +214,7 @@ public class MyShareActivity extends Activity implements ActionListener {
             case PermissionUtil.ACCESS_GPS_LOCATION_PERMISSIONS:
                 createAp();
                 break;
-            case PermissionUtil.BACK_FROM_SETTING_PERMISSION://从系统设置回来
+            case PermissionUtil.BACK_FROM_SETTING_PERMISSION://从系统设置回来，dialog4开启的系统设置
                 createAp();
             default:
                 break;
@@ -245,33 +222,46 @@ public class MyShareActivity extends Activity implements ActionListener {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    /**
+     * Rayn
+     * requestCode
+     * 每个数字代表一种权限 1是storage 7是location
+     * grantResult
+     * PackageManager.PERMISSION_GRANTED 是0
+     * PackageManager.PERMISSION_DENIED 是-1
+     */
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (null == permissions || permissions.length == 0) return;
 
         if (grantResults[0] == PackageManager.PERMISSION_DENIED) {
-            //在用户已经拒绝授权的情况下，如果shouldShowRequestPermissionRationale返回false则
-            //可以推断出用户选择了“不在提示”选项，在这种情况下需要引导用户至设置页手动授权
             if (requestCode == PermissionUtil.READ_EXTERNAL_STORAGE_PERMISSIONS) {
-                //选择了Don't ask again
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !shouldShowRequestPermissionRationale("android.permission.READ_EXTERNAL_STORAGE")) {
+                    ActionProtocol.sendDenyStoragePermissionAndDontAskAction(this);
                     PermissionUtil.showSettingPermissionDlg(this);
                 } else {
+                    ActionProtocol.sendDenyStoragePermissionAction(this);
                     createAp();
                 }
             }
 
             if (requestCode == PermissionUtil.ACCESS_COARSE_LOCATION_PERMISSIONS) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !shouldShowRequestPermissionRationale("android.permission.ACCESS_COARSE_LOCATION")) {
+                    ActionProtocol.sendDenyLocationPermissionAndDontAskAction(this);
                     PermissionUtil.showSettingPermissionDlg(this);
                 } else {
+                    ActionProtocol.sendDenyLocationPermissionAction(this);
                     createAp();
                 }
             }
-        } else {//PERMISSION_GRANTED
+        } else {
             switch (requestCode) {
                 case PermissionUtil.READ_EXTERNAL_STORAGE_PERMISSIONS:
+                    ActionProtocol.sendStoragePermissionGrantedAction(this);
+                    createAp();
+                    break;
                 case PermissionUtil.ACCESS_COARSE_LOCATION_PERMISSIONS:
+                    ActionProtocol.sendLocatioinPermissionGrantedAction(this);
                     createAp();
                     break;
                 default:
@@ -280,29 +270,115 @@ public class MyShareActivity extends Activity implements ActionListener {
         }
     }
 
-    @Override
-    public void someoneOnline() {
+    private void registerListener() {
+        protocol = new ActionProtocol();
+        protocol.register(this);
+        protocol.setActionListener(new ActionListener(){
+            @Override
+            public void someoneOnline() {
+                System.out.println("---Rayn someoneOnline");
+            }
 
-    }
+            @Override
+            public void someoneOffline() {
+                System.out.println("---Rayn someoneOffline");
+            }
 
-    @Override
-    public void someoneOffline() {
+            @Override
+            public void transferSuccess(String android_id, String channel, String filePath) {
+                System.out.println("---Rayn transferSuccess:"+filePath);
+            }
 
-    }
+            @Override
+            public void transferFailure(String filePath) {
+                System.out.println("---Rayn transferFailure");
+            }
 
-    @Override
-    public void transferSuccess(String android_id, String channel, String filePath) {
+            @Override
+            public void transferAll(String android_id, String channel) {
+                System.out.println("---Rayn transferAll");
+            }
 
-    }
+            @Override
+            public void grantPermissionSuccess() {
+                System.out.println("---Rayn grantPermissionSuccess");
+            }
 
-    @Override
-    public void transferFailure(String filePath) {
+            @Override
+            public void qrCodeShowed() {
+                System.out.println("---Rayn qrCodeShowed");
+            }
 
-    }
+            @Override
+            public void grantStoragePermission() {
+                System.out.println("---Rayn grantStoragePermission");
+            }
 
-    @Override
-    public void transferAll(String android_id, String channel) {
+            @Override
+            public void grantLocationPermission() {
+                System.out.println("---Rayn grantLocationPermission");
+            }
 
+            @Override
+            public void denyStoragePermission() {
+                System.out.println("---Rayn denyStoragePermission");
+            }
+
+            @Override
+            public void denyLocationPermission() {
+                System.out.println("---Rayn denyLocationPermission");
+            }
+
+            @Override
+            public void denyStoragePermissionAndDontAsk() {
+                System.out.println("---Rayn denyStoragePermissionAndDontAsk");
+            }
+
+            @Override
+            public void denyLocationPermissionAndDontAsk() {
+                System.out.println("---Rayn denyLocationPermissionAndDontAsk");
+            }
+
+            @Override
+            public void dlg_1_yes() {
+                System.out.println("---Rayn dlg_1_yes");
+            }
+
+            @Override
+            public void dlg_2_yes() {
+                System.out.println("---Rayn dlg_2_yes");
+            }
+
+            @Override
+            public void dlg_3_yes() {
+                System.out.println("---Rayn dlg_3_yes");
+            }
+
+            @Override
+            public void dlg_4_yes() {
+                System.out.println("---Rayn dlg_4_yes");
+            }
+
+            @Override
+            public void dlg_1_no() {
+                System.out.println("---Rayn dlg_1_no");
+            }
+
+            @Override
+            public void dlg_2_no() {
+                System.out.println("---Rayn dlg_2_no");
+            }
+
+            @Override
+            public void dlg_3_no() {
+                System.out.println("---Rayn dlg_3_no");
+            }
+
+            @Override
+            public void dlg_4_no() {
+                System.out.println("---Rayn dlg_4_no");
+            }
+        });
     }
 
 
