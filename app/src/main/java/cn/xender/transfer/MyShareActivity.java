@@ -184,6 +184,8 @@ public class MyShareActivity extends Activity {
         QrCodeCreateWorker.clear();
 
         CoreApManager.getInstance().shutdownAp();
+
+        protocol.unregister(this);
     }
 
     @Override
@@ -277,11 +279,6 @@ public class MyShareActivity extends Activity {
             @Override
             public void someoneOnline() {
                 System.out.println("---Rayn someoneOnline");
-            }
-
-            @Override
-            public void someoneOffline() {
-                System.out.println("---Rayn someoneOffline");
             }
 
             @Override
